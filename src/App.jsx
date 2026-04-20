@@ -38,27 +38,21 @@ const OVERHEAD_KW  = ["docusign","sqsp","squarespace","land id","google.*workspa
 const WS_TOOLS_KW  = ["mojo dialer","smarter contact","land portal","investorlift","directskip","real side re educati","theericcl","wholesale takeover","top level consulting","all-in advisor","robbins research"];
 
 const LEAD_SOURCES = [
-  { key:"sms",      label:"SMS Agency",   keywords:["sms","text","smarter"],               color:{dot:"#1D9E75",bg:"#E1F5EE",text:"#0F6E56"} },
-  { key:"cc_agency",label:"CC Agency",    keywords:["cold call","cc agency","call agency","calling agency","cold caller agency"], color:{dot:"#378ADD",bg:"#E6F1FB",text:"#185FA5"} },
-  { key:"email",    label:"Email Agency", keywords:["email","e-mail","email agency"],       color:{dot:"#BA7517",bg:"#FAEEDA",text:"#854F0B"} },
-  { key:"local_cc", label:"Local Caller", keywords:["local","in house","in-house","local cc","local cold"], color:{dot:"#534AB7",bg:"#EEEDFE",text:"#3C3489"} },
+  { key:"sms",      label:"SMS Agency",   tags:["smarter contact","sms","smarter"],                           color:{dot:"#1D9E75",bg:"#E1F5EE",text:"#0F6E56"} },
+  { key:"cc_agency",label:"CC Agency",    tags:["cold call","cc agency","call agency","calling agency","mojo"],color:{dot:"#378ADD",bg:"#E6F1FB",text:"#185FA5"} },
+  { key:"email",    label:"Email Agency", tags:["email lead","email agency","email"],                          color:{dot:"#BA7517",bg:"#FAEEDA",text:"#854F0B"} },
+  { key:"local_cc", label:"Local Caller", tags:["local","in house","in-house","local cc","local cold"],        color:{dot:"#534AB7",bg:"#EEEDFE",text:"#3C3489"} },
 ];
 const CONVERTED_STAGE_KWS = ["contract","offer","assigned","closed","jv","purchase"];
 
 function match(desc, kws) { const d=desc.toLowerCase(); return kws.some(k=>new RegExp(k).test(d)); }
-function resolveFieldValue(field) {
-  if (!field || field.value == null) return "";
-  if (field.type === "drop_down") {
-    const opt=(field.type_config?.options||[]).find(o=>o.id===field.value);
-    return opt?.name||"";
-  }
-  return typeof field.value==="string"?field.value:String(field.value);
-}
 function getLeadSource(task) {
-  const f=(task.custom_fields||[]).find(f=>(f.name||"").toLowerCase().replace(/[\s_-]/g,"").includes("source"));
-  const raw=resolveFieldValue(f).toLowerCase().trim();
-  if(!raw)return"unknown";
-  return(LEAD_SOURCES.find(s=>s.keywords.some(k=>raw.includes(k)))||{key:"unknown"}).key;
+  const taskTags=(task.tags||[]).map(t=>(t.name||"").toLowerCase().trim());
+  if(!taskTags.length)return"unknown";
+  for(const src of LEAD_SOURCES){
+    if(src.tags.some(tag=>taskTags.some(tt=>tt.includes(tag)||tag.includes(tt))))return src.key;
+  }
+  return"unknown";
 }
 function isConverted(task){return CONVERTED_STAGE_KWS.some(k=>(task.status?.status||"").toLowerCase().includes(k));}
 function categorizeTxn(date, desc, txnType, amount) {
