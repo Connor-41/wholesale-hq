@@ -38,10 +38,10 @@ const OVERHEAD_KW  = ["docusign","sqsp","squarespace","land id","google.*workspa
 const WS_TOOLS_KW  = ["mojo dialer","smarter contact","land portal","investorlift","directskip","real side re educati","theericcl","wholesale takeover","top level consulting","all-in advisor","robbins research"];
 
 const LEAD_SOURCES = [
-  { key:"sms",      label:"SMS Agency",   tags:["smarter contact","sms","smarter"],                           color:{dot:"#1D9E75",bg:"#E1F5EE",text:"#0F6E56"} },
-  { key:"cc_agency",label:"CC Agency",    tags:["cold call","cc agency","call agency","calling agency","mojo"],color:{dot:"#378ADD",bg:"#E6F1FB",text:"#185FA5"} },
-  { key:"email",    label:"Email Agency", tags:["email lead","email agency","email"],                          color:{dot:"#BA7517",bg:"#FAEEDA",text:"#854F0B"} },
-  { key:"local_cc", label:"Local Caller", tags:["local","in house","in-house","local cc","local cold"],        color:{dot:"#534AB7",bg:"#EEEDFE",text:"#3C3489"} },
+  { key:"sms",      label:"SMS Agency",   tags:["smarter contact","sms","smarter"],    color:{dot:"#1D9E75",bg:"#E1F5EE",text:"#0F6E56"} },
+  { key:"cc_agency",label:"Run It Remote",tags:["cc agency"],                           color:{dot:"#378ADD",bg:"#E6F1FB",text:"#185FA5"} },
+  { key:"email",    label:"Email Agency", tags:["email lead","email agency","email"],   color:{dot:"#BA7517",bg:"#FAEEDA",text:"#854F0B"} },
+  { key:"local_cc", label:"Kyra",         tags:["kyra"],                                color:{dot:"#534AB7",bg:"#EEEDFE",text:"#3C3489"} },
 ];
 const CONVERTED_STAGE_KWS = ["contract","offer","assigned","closed","jv","purchase"];
 
