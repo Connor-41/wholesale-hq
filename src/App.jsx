@@ -37,7 +37,30 @@ const WS_INCOME_KW = ["assignment","massengill","smith road","trassack","marigol
 const OVERHEAD_KW  = ["docusign","sqsp","squarespace","land id","google.*workspace","gsuite","google.*gsuite","slack","zoom\\.","loom subscription","loom.com","lucid software","companycam","buildertrend","buildxact","myfico","thecreditconfidential","progressive ins","noble desktop","frontier ai","claude\\.","anthropic","rocket money","openphone","quo.*openphone","mailchimp","zapier","veed","meetup","highlevel","gohighlevel","nc licensing board","monthly service fee","intuit.*qbooks","quickbooks","intuit.*live","indeed","linkedin.*job","land id inc","remitly"];
 const WS_TOOLS_KW  = ["mojo dialer","smarter contact","land portal","investorlift","directskip","real side re educati","theericcl","wholesale takeover","top level consulting","all-in advisor","robbins research"];
 
+const LEAD_SOURCES = [
+  { key:"sms",      label:"SMS Agency",   keywords:["sms","text","smarter"],               color:{dot:"#1D9E75",bg:"#E1F5EE",text:"#0F6E56"} },
+  { key:"cc_agency",label:"CC Agency",    keywords:["cold call","cc agency","call agency","calling agency","cold caller agency"], color:{dot:"#378ADD",bg:"#E6F1FB",text:"#185FA5"} },
+  { key:"email",    label:"Email Agency", keywords:["email","e-mail","email agency"],       color:{dot:"#BA7517",bg:"#FAEEDA",text:"#854F0B"} },
+  { key:"local_cc", label:"Local Caller", keywords:["local","in house","in-house","local cc","local cold"], color:{dot:"#534AB7",bg:"#EEEDFE",text:"#3C3489"} },
+];
+const CONVERTED_STAGE_KWS = ["contract","offer","assigned","closed","jv","purchase"];
+
 function match(desc, kws) { const d=desc.toLowerCase(); return kws.some(k=>new RegExp(k).test(d)); }
+function resolveFieldValue(field) {
+  if (!field || field.value == null) return "";
+  if (field.type === "drop_down") {
+    const opt=(field.type_config?.options||[]).find(o=>o.id===field.value);
+    return opt?.name||"";
+  }
+  return typeof field.value==="string"?field.value:String(field.value);
+}
+function getLeadSource(task) {
+  const f=(task.custom_fields||[]).find(f=>(f.name||"").toLowerCase().replace(/[\s_-]/g,"").includes("source"));
+  const raw=resolveFieldValue(f).toLowerCase().trim();
+  if(!raw)return"unknown";
+  return(LEAD_SOURCES.find(s=>s.keywords.some(k=>raw.includes(k)))||{key:"unknown"}).key;
+}
+function isConverted(task){return CONVERTED_STAGE_KWS.some(k=>(task.status?.status||"").toLowerCase().includes(k));}
 function categorizeTxn(date, desc, txnType, amount) {
   if(txnType==="ACCT_XFER") return null;
   if(txnType==="FEE_TRANSACTION") return "fees";
@@ -120,6 +143,44 @@ export default function App() {
   const filteredDisp=useMemo(()=>dispTasks.filter(t=>t.name?.toLowerCase().includes(dealSearch.toLowerCase())),[dispTasks,dealSearch]);
   const filteredAcq=useMemo(()=>acqTasks.filter(t=>t.name?.toLowerCase().includes(dealSearch.toLowerCase())),[acqTasks,dealSearch]);
 
+  const leadsData=useMemo(()=>{
+    const map={};
+    [...LEAD_SOURCES,{key:"unknown",label:"Unknown",color:{dot:"#888780",bg:"#F1EFE8",text:"#444441"}}].forEach(s=>{map[s.key]={...s,total:0,converted:0,byStage:{},tasks:[]};});
+    acqTasks.forEach(task=>{
+      const k=getLeadSource(task);
+      const e=map[k]||map.unknown;
+      e.total++;
+      if(isConverted(task))e.converted++;
+      const st=task.status?.status||"Unknown";
+      e.byStage[st]=(e.byStage[st]||0)+1;
+      e.tasks.push(task);
+    });
+    return map;
+  },[acqTasks]);
+
+  const dailyLeads=useMemo(()=>{
+    const now=Date.now(),dayMs=86400000;
+    const days=Array.from({length:30},(_,i)=>{
+      const d=new Date(now-(29-i)*dayMs);
+      const key=d.toLocaleDateString("en-US",{month:"2-digit",day:"2-digit"});
+      const obj={key,total:0};
+      LEAD_SOURCES.forEach(s=>{obj[s.key]=0;});
+      return obj;
+    });
+    acqTasks.forEach(task=>{
+      const created=parseInt(task.date_created||"0");
+      if(!created)return;
+      const ago=Math.floor((now-created)/dayMs);
+      if(ago<0||ago>29)return;
+      const idx=29-ago;
+      if(!days[idx])return;
+      days[idx].total++;
+      const src=getLeadSource(task);
+      if(days[idx][src]!==undefined)days[idx][src]++;
+    });
+    return days;
+  },[acqTasks]);
+
   async function askAI(){
     if(!aiInput.trim()||aiLoading)return;
     setAiLoading(true);const q=aiInput;setAiInput("");
@@ -135,7 +196,7 @@ export default function App() {
   const S={background:"#fff",border:"1px solid #e5e5e3",borderRadius:12,padding:"14px 16px"};
   const T={fontSize:11,fontWeight:500,color:"#888",textTransform:"uppercase",letterSpacing:".05em",marginBottom:12};
   const DR={display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid #f0f0ee"};
-  const NAV=[{id:"overview",label:"Overview"},{id:"dispositions",label:"Dispositions"},{id:"acquisitions",label:"Acquisitions"},{id:"transactions",label:"Transactions"}];
+  const NAV=[{id:"overview",label:"Overview"},{id:"leads",label:"Leads"},{id:"dispositions",label:"Dispositions"},{id:"acquisitions",label:"Acquisitions"},{id:"transactions",label:"Transactions"}];
 
   return(
     <div style={{display:"grid",gridTemplateColumns:"200px 1fr",minHeight:"100vh",background:"#fff",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
@@ -154,7 +215,7 @@ export default function App() {
 
       <div style={{padding:24,display:"flex",flexDirection:"column",gap:16,overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:22,fontWeight:600,color:"#1a1a1a"}}>{{overview:"Overview",dispositions:"Dispositions",acquisitions:"Acquisitions",transactions:"Transactions"}[page]}</div>
+          <div style={{fontSize:22,fontWeight:600,color:"#1a1a1a"}}>{{overview:"Overview",leads:"Leads",dispositions:"Dispositions",acquisitions:"Acquisitions",transactions:"Transactions"}[page]}</div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {error&&<span style={{fontSize:12,color:"#E24B4A"}}>{error}</span>}
             <div style={{fontSize:12,color:"#888",background:"#f5f5f3",padding:"5px 10px",borderRadius:8,border:"1px solid #e5e5e3"}}>{loading?"Syncing ClickUp...":`${dispTasks.length+acqTasks.length} deals live`}</div>
@@ -212,6 +273,176 @@ export default function App() {
           <input value={dealSearch} onChange={e=>setDealSearch(e.target.value)} placeholder="Search leads..." style={{fontSize:13,padding:"8px 12px",borderRadius:8,border:"1px solid #e5e5e3",background:"#f9f9f7",color:"#1a1a1a",outline:"none"}}/>
           <div style={S}><div style={T}>All acquisitions ({filteredAcq.length})</div>
             {loading?<div style={{fontSize:13,color:"#888"}}>Loading from ClickUp...</div>:filteredAcq.map(t=>(<div key={t.id} style={{...DR,flexWrap:"wrap"}}><span style={{fontSize:13,color:"#1a1a1a",flex:1,minWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span><AcqPill label={t.status?.status} colorMap={acqColorMap}/><span style={{fontSize:11,color:"#aaa",marginLeft:"auto"}}>{t.date_updated?new Date(parseInt(t.date_updated)).toLocaleDateString():""}</span></div>))}
+          </div>
+        </>}
+
+        {page==="leads"&&<>
+          {/* Source summary cards */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+            {LEAD_SOURCES.map(s=>{
+              const d=leadsData[s.key]||{total:0,converted:0};
+              const rate=d.total>0?Math.round((d.converted/d.total)*100):0;
+              return(
+                <div key={s.key} style={{background:"#f5f5f3",borderRadius:8,padding:"12px 14px",borderLeft:`3px solid ${s.color.dot}`}}>
+                  <div style={{fontSize:11,color:"#888",textTransform:"uppercase",letterSpacing:".05em",marginBottom:8}}>{s.label}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+                    <div><div style={{fontSize:22,fontWeight:500,color:"#1a1a1a",lineHeight:1}}>{loading?"—":d.total}</div><div style={{fontSize:10,color:"#aaa",marginTop:2}}>Total leads</div></div>
+                    <div><div style={{fontSize:22,fontWeight:500,color:s.color.dot,lineHeight:1}}>{loading?"—":d.converted}</div><div style={{fontSize:10,color:"#aaa",marginTop:2}}>Converted</div></div>
+                  </div>
+                  <div style={{background:"#e5e5e3",borderRadius:4,height:4,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${rate}%`,background:s.color.dot,borderRadius:4}}/>
+                  </div>
+                  <div style={{fontSize:11,color:"#888",marginTop:5}}>{rate}% conversion rate</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Daily volume — last 30 days */}
+          <div style={S}>
+            <div style={T}>Daily leads — last 30 days</div>
+            {loading?<div style={{fontSize:13,color:"#888"}}>Loading from ClickUp...</div>:(()=>{
+              const maxTotal=Math.max(...dailyLeads.map(d=>d.total),1);
+              return(
+                <div>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:1,height:72,marginBottom:6}}>
+                    {dailyLeads.map((d,i)=>(
+                      <div key={i} title={`${d.key}: ${d.total} lead${d.total!==1?"s":""}`} style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"flex-end",cursor:"default"}}>
+                        <div style={{width:"100%",background:d.total>0?"#1D9E75":"#f0f0ee",height:d.total>0?Math.max(Math.round((d.total/maxTotal)*68),3):2,borderRadius:"2px 2px 0 0"}}/>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#aaa",marginBottom:12}}>
+                    <span>{dailyLeads[0]?.key}</span><span>{dailyLeads[14]?.key}</span><span>{dailyLeads[29]?.key}</span>
+                  </div>
+                  <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+                    {LEAD_SOURCES.map(s=>{
+                      const thisWeek=dailyLeads.slice(-7).reduce((a,d)=>a+(d[s.key]||0),0);
+                      const lastWeek=dailyLeads.slice(-14,-7).reduce((a,d)=>a+(d[s.key]||0),0);
+                      const trend=thisWeek>lastWeek?"↑":thisWeek<lastWeek?"↓":"→";
+                      const trendColor=thisWeek>lastWeek?"#1D9E75":thisWeek<lastWeek?"#E24B4A":"#888";
+                      return(<div key={s.key} style={{display:"flex",alignItems:"center",gap:6,fontSize:12}}>
+                        <div style={{width:8,height:8,borderRadius:"50%",background:s.color.dot,flexShrink:0}}/>
+                        <span style={{color:"#666"}}>{s.label}:</span>
+                        <strong style={{color:"#1a1a1a"}}>{thisWeek}</strong>
+                        <span style={{color:"#aaa"}}>this wk</span>
+                        <span style={{color:trendColor,fontWeight:500}}>{trend}</span>
+                      </div>);
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Key metrics comparison table */}
+          <div style={S}>
+            <div style={T}>Source comparison</div>
+            {loading?<div style={{fontSize:13,color:"#888"}}>Loading from ClickUp...</div>:(()=>{
+              const totalLeads=acqTasks.length||1;
+              return(
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                    <thead>
+                      <tr>
+                        {["Source","Total leads","% of pipeline","Converted","Conv. rate","Avg/day (30d)","This week"].map(h=>(
+                          <th key={h} style={{textAlign:h==="Source"?"left":"center",padding:"7px 10px",color:"#888",fontWeight:500,fontSize:11,textTransform:"uppercase",letterSpacing:".04em",borderBottom:"1px solid #e5e5e3"}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {LEAD_SOURCES.map(s=>{
+                        const d=leadsData[s.key]||{total:0,converted:0};
+                        const rate=d.total>0?((d.converted/d.total)*100).toFixed(1):"0.0";
+                        const pct=((d.total/totalLeads)*100).toFixed(1);
+                        const avgDay=(d.total/30).toFixed(1);
+                        const thisWeek=dailyLeads.slice(-7).reduce((a,day)=>a+(day[s.key]||0),0);
+                        return(
+                          <tr key={s.key} style={{borderBottom:"1px solid #f5f5f3"}}>
+                            <td style={{padding:"8px 10px"}}><span style={{fontSize:12,padding:"2px 8px",borderRadius:20,fontWeight:500,background:s.color.bg,color:s.color.text}}>{s.label}</span></td>
+                            <td style={{padding:"8px 10px",textAlign:"center",fontWeight:600,fontSize:15}}>{d.total}</td>
+                            <td style={{padding:"8px 10px",textAlign:"center",color:"#888"}}>{pct}%</td>
+                            <td style={{padding:"8px 10px",textAlign:"center",color:s.color.dot,fontWeight:600}}>{d.converted}</td>
+                            <td style={{padding:"8px 10px",textAlign:"center"}}><span style={{background:Number(rate)>=5?"#E1F5EE":Number(rate)>=2?"#FAEEDA":"#FCEBEB",color:Number(rate)>=5?"#0F6E56":Number(rate)>=2?"#854F0B":"#791F1F",padding:"2px 8px",borderRadius:20,fontSize:12,fontWeight:500}}>{rate}%</span></td>
+                            <td style={{padding:"8px 10px",textAlign:"center",color:"#888"}}>{avgDay}</td>
+                            <td style={{padding:"8px 10px",textAlign:"center",fontWeight:500}}>{thisWeek}</td>
+                          </tr>
+                        );
+                      })}
+                      <tr style={{borderTop:"2px solid #e5e5e3",background:"#f9f9f7"}}>
+                        <td style={{padding:"8px 10px",fontWeight:500,color:"#888",fontSize:12}}>TOTAL</td>
+                        <td style={{padding:"8px 10px",textAlign:"center",fontWeight:600,fontSize:15}}>{acqTasks.length}</td>
+                        <td style={{padding:"8px 10px",textAlign:"center",color:"#888"}}>100%</td>
+                        <td style={{padding:"8px 10px",textAlign:"center",fontWeight:600,color:"#1D9E75"}}>{LEAD_SOURCES.reduce((a,s)=>a+(leadsData[s.key]?.converted||0),0)}</td>
+                        <td style={{padding:"8px 10px",textAlign:"center",color:"#888"}}>{acqTasks.length>0?(LEAD_SOURCES.reduce((a,s)=>a+(leadsData[s.key]?.converted||0),0)/acqTasks.length*100).toFixed(1):"0.0"}%</td>
+                        <td style={{padding:"8px 10px",textAlign:"center",color:"#888"}}>{(acqTasks.length/30).toFixed(1)}</td>
+                        <td style={{padding:"8px 10px",textAlign:"center",fontWeight:500}}>{dailyLeads.slice(-7).reduce((a,d)=>a+d.total,0)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Stage breakdown by source */}
+          <div style={S}>
+            <div style={T}>Pipeline stage by source</div>
+            {loading?<div style={{fontSize:13,color:"#888"}}>Loading from ClickUp...</div>:(()=>{
+              const allStages=[...new Set(acqTasks.map(t=>t.status?.status||"Unknown"))];
+              if(!allStages.length)return<div style={{fontSize:13,color:"#888"}}>No acquisition tasks found.</div>;
+              return(
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                    <thead>
+                      <tr>
+                        <th style={{textAlign:"left",padding:"7px 10px",color:"#888",fontWeight:500,fontSize:11,textTransform:"uppercase",borderBottom:"1px solid #e5e5e3"}}>Stage</th>
+                        {LEAD_SOURCES.map(s=><th key={s.key} style={{textAlign:"center",padding:"7px 10px",color:s.color.text,fontWeight:500,fontSize:11,textTransform:"uppercase",borderBottom:"1px solid #e5e5e3"}}>{s.label}</th>)}
+                        <th style={{textAlign:"center",padding:"7px 10px",color:"#888",fontWeight:500,fontSize:11,textTransform:"uppercase",borderBottom:"1px solid #e5e5e3"}}>Unknown</th>
+                        <th style={{textAlign:"center",padding:"7px 10px",color:"#aaa",fontWeight:500,fontSize:11,textTransform:"uppercase",borderBottom:"1px solid #e5e5e3"}}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allStages.map(st=>{
+                        const rowTotal=LEAD_SOURCES.reduce((a,s)=>a+(leadsData[s.key]?.byStage[st]||0),0)+(leadsData.unknown?.byStage[st]||0);
+                        return(
+                          <tr key={st} style={{borderBottom:"1px solid #f5f5f3"}}>
+                            <td style={{padding:"7px 10px"}}><AcqPill label={st} colorMap={acqColorMap}/></td>
+                            {[...LEAD_SOURCES,{key:"unknown"}].map(s=>{
+                              const count=leadsData[s.key]?.byStage[st]||0;
+                              return<td key={s.key} style={{padding:"7px 10px",textAlign:"center",color:count>0?"#1a1a1a":"#ddd",fontWeight:count>0?500:400}}>{count||"—"}</td>;
+                            })}
+                            <td style={{padding:"7px 10px",textAlign:"center",fontWeight:600,color:"#888"}}>{rowTotal}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Export */}
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
+            <button onClick={()=>{
+              const rows=[["Lead Name","Source","Stage","Date Created","Converted","Days Since Created"]];
+              const now=Date.now();
+              acqTasks.forEach(t=>{
+                const src=LEAD_SOURCES.find(s=>s.key===getLeadSource(t))?.label||"Unknown";
+                const created=parseInt(t.date_created||"0");
+                const dateStr=created?new Date(created).toLocaleDateString("en-US"):"";
+                const days=created?Math.floor((now-created)/86400000):"";
+                rows.push([t.name||"",src,t.status?.status||"",dateStr,isConverted(t)?"Yes":"No",days]);
+              });
+              const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+              const a=document.createElement("a");
+              a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+              a.download="leads_export.csv";
+              a.click();
+            }} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"1px solid #e5e5e3",background:"#fff",color:"#1a1a1a",cursor:"pointer",fontWeight:500}}>
+              ↓ Export to CSV / Excel
+            </button>
           </div>
         </>}
 
