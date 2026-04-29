@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.local
+
+# Gmail OAuth secrets — never commit these
+scripts/gmail_credentials.json
+scripts/gmail_token.json
+scripts/filter_deals.log
