@@ -1,15 +1,18 @@
 /**
  * Wholesale HQ — AI Chatbot Server
  *
- * Receives inbound SMS webhooks from SmarterContact, runs the conversation
- * through Claude, and sends the AI reply back via the SmarterContact API.
+ * HOW IT WORKS:
+ *   Zap #1 (Inbound):  SmarterContact "New Reply" → Webhooks by Zapier → POST /webhook/smartercontact
+ *   Zap #2 (Outbound): Webhooks by Zapier (catch hook) → SmarterContact "Send Message"
+ *
+ * Our server sits in the middle: receives the inbound Zapier POST, generates an
+ * AI reply with Claude, then POSTs the reply to the Zap #2 catch-hook URL so
+ * Zapier can fire it back through SmarterContact.
  *
  * Required env vars (copy .env.example → .env):
- *   ANTHROPIC_API_KEY
- *   SMARTER_CONTACT_API_KEY
- *   SMARTER_CONTACT_FROM_NUMBER   (your SmarterContact sending number)
- *   WEBHOOK_SECRET                (optional — verify SC webhook signature)
- *   PORT                          (default 3001)
+ *   ANTHROPIC_API_KEY           — from console.anthropic.com
+ *   ZAPIER_OUTBOUND_WEBHOOK_URL — Zap #2 catch-hook URL (Zapier gives you this)
+ *   PORT                        — default 3001
  */
 
 import express from "express";
@@ -41,28 +44,28 @@ function saveConversations(data) {
 let conversations = loadConversations();
 
 // ---------------------------------------------------------------------------
-// Anthropic client
+// Anthropic / Claude
 // ---------------------------------------------------------------------------
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `You are Alex, a friendly SMS assistant for Fort Rose Capital — a real estate investment company in North Carolina run by Connor Orcutt. You are texting homeowners about a potential cash offer on their property.
+const SYSTEM_PROMPT = `You are Alex, a friendly SMS assistant for Fort Rose Capital — a real estate investment company in North Carolina run by Connor Orcutt. You are texting homeowners who may be interested in a cash offer on their property.
 
 Your goals (in order):
-1. Start a natural, low-pressure conversation to understand their situation.
+1. Have a natural, low-pressure conversation to understand their situation.
 2. Find out if they are open to selling and on what timeline.
 3. If they show any interest, ask to set up a free 15-minute call with Connor.
 4. Connor is available Mon–Fri, 9 am–6 pm Eastern for calls (virtual or in-person meetings also available).
-5. Once an appointment is confirmed, wrap up warmly.
+5. Once an appointment is confirmed, wrap up warmly and stop pushing.
 
 Critical SMS rules:
 - Every message must be 1–3 SHORT sentences. This is SMS — brevity is essential.
 - Never be pushy, salesy, or repeat the same pitch twice.
 - Be empathetic — many sellers have stressful situations (divorce, foreclosure, inherited property, etc.).
-- If they say "stop", "unsubscribe", "remove me", or "not interested", respond once to politely acknowledge and do not follow up.
-- Do NOT mention the property address unless the contact brings it up first.
+- If they say "stop", "unsubscribe", "remove me", or "not interested", respond once to politely acknowledge and do not follow up again.
+- Do NOT mention a specific property address unless the contact brings it up first.
 
-Special markers (append to the end of your reply when appropriate — these will be stripped before sending):
-- When an appointment is confirmed: [APPOINTMENT_SCHEDULED: <day and time the contact agreed to>]
+Special markers — append to the END of your reply when appropriate (stripped before sending):
+- When an appointment time is confirmed: [APPOINTMENT_SCHEDULED: <day and time the contact agreed to>]
 - When the contact opts out or is firmly not interested: [OPT_OUT]`;
 
 async function generateReply(history) {
@@ -76,34 +79,32 @@ async function generateReply(history) {
 }
 
 // ---------------------------------------------------------------------------
-// SmarterContact API helpers
+// Zapier outbound webhook
 //
-// SmarterContact REST API base: https://app.smartercontact.com/api/v1
-// Auth: Bearer token (your API key from Settings → Integrations → API)
-//
-// If the endpoint shape differs from what you see in your SC account,
-// update SEND_URL and the request body below to match your SC API docs.
+// Zap #2 setup in Zapier:
+//   Trigger:  Webhooks by Zapier → Catch Hook  (copy the URL → ZAPIER_OUTBOUND_WEBHOOK_URL)
+//   Action:   SmarterContact → Send Message
+//     • Map "contact_id"    → contact_id field from the webhook payload
+//     • Map "message"       → message field from the webhook payload
 // ---------------------------------------------------------------------------
-const SC_BASE = "https://app.smartercontact.com/api/v1";
-const SC_KEY = process.env.SMARTER_CONTACT_API_KEY;
-const SC_FROM = process.env.SMARTER_CONTACT_FROM_NUMBER;
+async function sendViaZapier(contactId, contactPhone, message) {
+  const url = process.env.ZAPIER_OUTBOUND_WEBHOOK_URL;
+  if (!url) throw new Error("ZAPIER_OUTBOUND_WEBHOOK_URL is not set in .env");
 
-async function sendSmarterContactMessage(contactId, message) {
-  const url = `${SC_BASE}/contacts/${contactId}/messages`;
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${SC_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ message, from_number: SC_FROM }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contact_id: contactId,
+      contact_phone: contactPhone,
+      message,
+    }),
   });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`SmarterContact send failed (${res.status}): ${body}`);
+    throw new Error(`Zapier outbound webhook failed (${res.status}): ${body}`);
   }
-  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ async function sendSmarterContactMessage(contactId, message) {
 const app = express();
 app.use(express.json());
 
-// Allow the Vite dev server (port 5173) and any prod origin to hit the API
+// CORS — allow the Vite dev server on port 5173 to hit the API
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "Content-Type");
@@ -124,44 +125,46 @@ app.use((req, res, next) => {
 // ---------------------------------------------------------------------------
 // POST /webhook/smartercontact
 //
-// Configure this URL in SmarterContact:
-//   Settings → Integrations → Webhooks → Inbound Message Webhook
-//   URL: https://your-server.com/webhook/smartercontact
+// Zap #1 setup in Zapier:
+//   Trigger: SmarterContact → New Reply (fires when a contact replies to your campaign)
+//   Action:  Webhooks by Zapier → POST
+//     • URL:         http://your-server:3001/webhook/smartercontact
+//     • Payload:     JSON  (Zapier passes SmarterContact fields through automatically)
 //
-// Expected payload (SmarterContact standard inbound webhook):
-// {
-//   "contact_id":    "123456",
-//   "contact_phone": "+19198001234",
-//   "contact_name":  "Jane Smith",
-//   "message":       "Hey, what's this about?",
-//   "direction":     "inbound",   // "inbound" | "outbound"
-//   "campaign_id":   "789"
-// }
+// Zapier will POST a JSON body that includes SmarterContact contact fields.
+// Common field names from SmarterContact via Zapier:
+//   contact_id, id, contact_phone, phone, contact_name, name, message, body, text
+// We try all known variants so it works regardless of how Zapier maps the fields.
 // ---------------------------------------------------------------------------
 app.post("/webhook/smartercontact", async (req, res) => {
-  // Acknowledge immediately so SC doesn't retry due to timeout
+  // Acknowledge immediately so Zapier doesn't retry
   res.json({ received: true });
 
-  const {
-    contact_id,
-    contact_phone,
-    contact_name,
-    message,
-    direction,
-  } = req.body;
+  const body = req.body;
+  console.log("[webhook] received:", JSON.stringify(body));
 
-  // Only handle inbound (replies from contacts)
-  if (direction && direction !== "inbound") return;
+  // Normalise field names — Zapier may use different keys depending on version
+  const contactId   = body.contact_id   || body.id            || body.contactId   || "";
+  const contactPhone= body.contact_phone|| body.phone         || body.contactPhone || body.phoneNumber || "";
+  const contactName = body.contact_name || body.name          || body.contactName  || "Unknown";
+  const message     = body.message      || body.body          || body.text         || body.content    || "";
+  const direction   = body.direction    || body.type          || "inbound";
 
-  const id = String(contact_id || contact_phone || "").trim();
-  if (!id || !message?.trim()) return;
+  // Only process inbound (replies from contacts)
+  if (direction && !["inbound", "incoming", "received"].includes(direction.toLowerCase())) return;
 
-  // Init conversation record if new
+  const id = String(contactId || contactPhone).trim();
+  if (!id || !message.trim()) {
+    console.log("[webhook] skipped — missing id or message");
+    return;
+  }
+
+  // Init or retrieve conversation record
   if (!conversations[id]) {
     conversations[id] = {
       id,
-      contactPhone: contact_phone || id,
-      contactName: contact_name || "Unknown",
+      contactPhone: contactPhone || id,
+      contactName,
       status: "active", // active | paused | scheduled | opted-out
       history: [],
       appointmentTime: null,
@@ -174,18 +177,20 @@ app.post("/webhook/smartercontact", async (req, res) => {
 
   // Don't auto-reply if paused or opted-out
   if (convo.status === "paused" || convo.status === "opted-out") {
+    console.log(`[webhook] skipping ${id} — status: ${convo.status}`);
     saveConversations(conversations);
     return;
   }
 
-  // Append inbound message
+  // Append inbound message to history
   convo.history.push({ role: "user", content: message.trim() });
   convo.lastActivity = new Date().toISOString();
 
   try {
     const rawReply = await generateReply(convo.history);
+    console.log(`[claude] raw reply for ${id}:`, rawReply);
 
-    // Parse special control markers from Claude's reply
+    // Parse control markers
     let cleanReply = rawReply;
     let newStatus = convo.status;
     let appointmentTime = convo.appointmentTime;
@@ -202,16 +207,16 @@ app.post("/webhook/smartercontact", async (req, res) => {
       newStatus = "opted-out";
     }
 
-    // Append outbound reply to history
+    // Save outbound reply to history
     convo.history.push({ role: "assistant", content: cleanReply });
     convo.status = newStatus;
     convo.appointmentTime = appointmentTime;
     convo.lastActivity = new Date().toISOString();
-
     saveConversations(conversations);
 
-    // Fire reply back through SmarterContact
-    await sendSmarterContactMessage(id, cleanReply);
+    // Fire reply back through Zapier → SmarterContact
+    await sendViaZapier(id, convo.contactPhone, cleanReply);
+    console.log(`[zapier] reply sent for ${id}`);
   } catch (err) {
     console.error("[webhook] error:", err.message);
     convo.history.push({ role: "assistant", content: "[ERROR — reply not sent]" });
@@ -223,7 +228,6 @@ app.post("/webhook/smartercontact", async (req, res) => {
 // REST API — consumed by the frontend dashboard
 // ---------------------------------------------------------------------------
 
-// GET /api/conversations  — list all, newest first
 app.get("/api/conversations", (req, res) => {
   const list = Object.values(conversations).sort(
     (a, b) => new Date(b.lastActivity) - new Date(a.lastActivity)
@@ -231,14 +235,12 @@ app.get("/api/conversations", (req, res) => {
   res.json(list);
 });
 
-// GET /api/conversations/:id  — single conversation with full history
 app.get("/api/conversations/:id", (req, res) => {
   const convo = conversations[req.params.id];
   if (!convo) return res.status(404).json({ error: "Not found" });
   res.json(convo);
 });
 
-// POST /api/conversations/:id/pause
 app.post("/api/conversations/:id/pause", (req, res) => {
   const convo = conversations[req.params.id];
   if (!convo) return res.status(404).json({ error: "Not found" });
@@ -247,7 +249,6 @@ app.post("/api/conversations/:id/pause", (req, res) => {
   res.json(convo);
 });
 
-// POST /api/conversations/:id/resume
 app.post("/api/conversations/:id/resume", (req, res) => {
   const convo = conversations[req.params.id];
   if (!convo) return res.status(404).json({ error: "Not found" });
@@ -256,7 +257,6 @@ app.post("/api/conversations/:id/resume", (req, res) => {
   res.json(convo);
 });
 
-// GET /api/stats  — summary counts for dashboard cards
 app.get("/api/stats", (req, res) => {
   const all = Object.values(conversations);
   res.json({
@@ -268,7 +268,11 @@ app.get("/api/stats", (req, res) => {
   });
 });
 
+// Simple health check so you can confirm the server is reachable
+app.get("/health", (req, res) => res.json({ ok: true }));
+
 app.listen(PORT, () => {
-  console.log(`Wholesale HQ AI server → http://localhost:${PORT}`);
-  console.log(`Webhook endpoint        → POST http://localhost:${PORT}/webhook/smartercontact`);
+  console.log(`\nWholesale HQ AI server → http://localhost:${PORT}`);
+  console.log(`Health check            → GET  http://localhost:${PORT}/health`);
+  console.log(`Webhook (Zap #1)        → POST http://localhost:${PORT}/webhook/smartercontact\n`);
 });

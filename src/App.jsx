@@ -300,7 +300,7 @@ export default function App() {
             <div style={{background:"#FCEBEB",border:"1px solid #f5c6c6",borderRadius:10,padding:"12px 16px",fontSize:13,color:"#791F1F"}}>
               <strong>Server offline:</strong> {chatError}
               <div style={{marginTop:6,fontSize:12,color:"#b03030"}}>
-                1. Copy <code>.env.example</code> → <code>.env</code> and fill in your keys.<br/>
+                1. Copy <code>.env.example</code> → <code>.env</code> and fill in <code>ANTHROPIC_API_KEY</code> + <code>ZAPIER_OUTBOUND_WEBHOOK_URL</code>.<br/>
                 2. Run <code>npm install</code> then <code>npm run server</code> in a second terminal.
               </div>
             </div>
@@ -320,14 +320,28 @@ export default function App() {
           {/* Setup instructions when no conversations yet */}
           {!chatError&&chatConvos.length===0&&!chatLoading&&(
             <div style={{...S,borderStyle:"dashed"}}>
-              <div style={{fontSize:13,color:"#888",lineHeight:1.8}}>
-                <strong style={{color:"#1a1a1a",display:"block",marginBottom:8}}>No conversations yet — here's how to connect SmarterContact:</strong>
-                <ol style={{paddingLeft:18,margin:0}}>
-                  <li>Copy <code>.env.example</code> → <code>.env</code> and add your <strong>ANTHROPIC_API_KEY</strong> and <strong>SMARTER_CONTACT_API_KEY</strong>.</li>
-                  <li>Run <code>npm run server</code> to start the webhook server on port 3001.</li>
-                  <li>Expose it publicly with <a href="https://ngrok.com" style={{color:"#1D9E75"}}>ngrok</a>: <code>ngrok http 3001</code></li>
-                  <li>In SmarterContact → Settings → Integrations → Webhooks, set the <strong>Inbound Message Webhook</strong> URL to:<br/><code style={{background:"#f5f5f3",padding:"2px 6px",borderRadius:4}}>https://your-ngrok-url.ngrok.io/webhook/smartercontact</code></li>
-                  <li>When a contact replies to any SmarterContact campaign, the AI will automatically respond and the conversation will appear here.</li>
+              <div style={{fontSize:13,color:"#888",lineHeight:1.9}}>
+                <strong style={{color:"#1a1a1a",display:"block",marginBottom:10,fontSize:14}}>One-time setup — 4 steps to go live:</strong>
+                <ol style={{paddingLeft:18,margin:0,display:"flex",flexDirection:"column",gap:10}}>
+                  <li>
+                    <strong style={{color:"#1a1a1a"}}>Add your Anthropic key.</strong> Copy <code>.env.example</code> → <code>.env</code> and paste your <code>ANTHROPIC_API_KEY</code>.
+                  </li>
+                  <li>
+                    <strong style={{color:"#1a1a1a"}}>Create Zap #1 — Inbound (SmarterContact → our server).</strong><br/>
+                    In Zapier: Trigger = <em>SmarterContact › New Reply</em> · Action = <em>Webhooks by Zapier › POST</em><br/>
+                    URL: <code style={{background:"#f5f5f3",padding:"2px 6px",borderRadius:4}}>https://your-ngrok-url.ngrok.io/webhook/smartercontact</code> · Payload type: JSON
+                  </li>
+                  <li>
+                    <strong style={{color:"#1a1a1a"}}>Create Zap #2 — Outbound (our server → SmarterContact).</strong><br/>
+                    In Zapier: Trigger = <em>Webhooks by Zapier › Catch Hook</em> (copy the URL it gives you) · Action = <em>SmarterContact › Send Message</em><br/>
+                    Map: <code>contact_id</code> → Contact · <code>message</code> → Message body<br/>
+                    Paste that catch-hook URL into <code>.env</code> as <code>ZAPIER_OUTBOUND_WEBHOOK_URL</code>.
+                  </li>
+                  <li>
+                    <strong style={{color:"#1a1a1a"}}>Start the server and expose it.</strong><br/>
+                    <code>npm run server</code> in one terminal · <code>ngrok http 3001</code> in another<br/>
+                    Update Zap #1's POST URL with the ngrok <code>https://</code> URL. Done — blast your campaign and replies will appear here automatically.
+                  </li>
                 </ol>
               </div>
             </div>
