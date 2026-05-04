@@ -93,6 +93,43 @@ export default function App() {
   const [txnAcct,setTxnAcct]=useState("both");
   const [txnCat,setTxnCat]=useState("all");
   const [txnSearch,setTxnSearch]=useState("");
+  const [chatConvos,setChatConvos]=useState([]);
+  const [chatStats,setChatStats]=useState(null);
+  const [chatLoading,setChatLoading]=useState(false);
+  const [chatError,setChatError]=useState(null);
+  const [selectedConvo,setSelectedConvo]=useState(null);
+
+  const AI_SERVER = "http://localhost:3001";
+
+  const loadChatbot = useCallback(async () => {
+    setChatLoading(true); setChatError(null);
+    try {
+      const [convosRes, statsRes] = await Promise.all([
+        fetch(`${AI_SERVER}/api/conversations`),
+        fetch(`${AI_SERVER}/api/stats`),
+      ]);
+      if (!convosRes.ok || !statsRes.ok) throw new Error("Server unreachable");
+      const [convos, stats] = await Promise.all([convosRes.json(), statsRes.json()]);
+      setChatConvos(convos);
+      setChatStats(stats);
+      if (selectedConvo) {
+        const updated = convos.find(c => c.id === selectedConvo.id);
+        if (updated) setSelectedConvo(updated);
+      }
+    } catch {
+      setChatError("AI server offline — run: npm run server");
+    }
+    setChatLoading(false);
+  }, [selectedConvo]);
+
+  async function pauseConvo(id) {
+    await fetch(`${AI_SERVER}/api/conversations/${id}/pause`, { method: "POST" });
+    loadChatbot();
+  }
+  async function resumeConvo(id) {
+    await fetch(`${AI_SERVER}/api/conversations/${id}/resume`, { method: "POST" });
+    loadChatbot();
+  }
 
   const load=useCallback(async()=>{
     setLoading(true);setError(null);
@@ -105,6 +142,7 @@ export default function App() {
   },[]);
 
   useEffect(()=>{load();},[load]);
+  useEffect(()=>{if(page==="chatbot"){loadChatbot();const t=setInterval(loadChatbot,8000);return()=>clearInterval(t);}},[page,loadChatbot]);
 
   const acqColorMap=useMemo(()=>buildAcqColorMap(acqStatuses),[acqStatuses]);
   const dispCounts=useMemo(()=>{const c={};EC_STAGES.forEach(s=>c[s]=0);dispTasks.forEach(t=>{const st=(t.status?.status||"").toLowerCase();const m=EC_STAGES.find(s=>st.includes(s.toLowerCase()));if(m)c[m]++;});return c;},[dispTasks]);
@@ -135,7 +173,15 @@ export default function App() {
   const S={background:"#fff",border:"1px solid #e5e5e3",borderRadius:12,padding:"14px 16px"};
   const T={fontSize:11,fontWeight:500,color:"#888",textTransform:"uppercase",letterSpacing:".05em",marginBottom:12};
   const DR={display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid #f0f0ee"};
-  const NAV=[{id:"overview",label:"Overview"},{id:"dispositions",label:"Dispositions"},{id:"acquisitions",label:"Acquisitions"},{id:"transactions",label:"Transactions"}];
+  const CHAT_STATUS_META = {
+    active:     {dot:"#1D9E75", bg:"#E1F5EE", text:"#0F6E56", label:"Active"},
+    scheduled:  {dot:"#378ADD", bg:"#E6F1FB", text:"#185FA5", label:"Appt Scheduled"},
+    paused:     {dot:"#BA7517", bg:"#FAEEDA", text:"#854F0B", label:"Paused"},
+    "opted-out":{dot:"#888780", bg:"#F1EFE8", text:"#444441", label:"Opted Out"},
+  };
+  function ChatStatusPill({status}){const m=CHAT_STATUS_META[status]||CHAT_STATUS_META["opted-out"];return<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,fontWeight:500,background:m.bg,color:m.text,whiteSpace:"nowrap"}}>{m.label}</span>;}
+
+  const NAV=[{id:"overview",label:"Overview"},{id:"dispositions",label:"Dispositions"},{id:"acquisitions",label:"Acquisitions"},{id:"transactions",label:"Transactions"},{id:"chatbot",label:"AI Chatbot"}];
 
   return(
     <div style={{display:"grid",gridTemplateColumns:"200px 1fr",minHeight:"100vh",background:"#fff",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
@@ -154,7 +200,7 @@ export default function App() {
 
       <div style={{padding:24,display:"flex",flexDirection:"column",gap:16,overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:22,fontWeight:600,color:"#1a1a1a"}}>{{overview:"Overview",dispositions:"Dispositions",acquisitions:"Acquisitions",transactions:"Transactions"}[page]}</div>
+          <div style={{fontSize:22,fontWeight:600,color:"#1a1a1a"}}>{{overview:"Overview",dispositions:"Dispositions",acquisitions:"Acquisitions",transactions:"Transactions",chatbot:"AI Chatbot"}[page]}</div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {error&&<span style={{fontSize:12,color:"#E24B4A"}}>{error}</span>}
             <div style={{fontSize:12,color:"#888",background:"#f5f5f3",padding:"5px 10px",borderRadius:8,border:"1px solid #e5e5e3"}}>{loading?"Syncing ClickUp...":`${dispTasks.length+acqTasks.length} deals live`}</div>
@@ -249,6 +295,119 @@ export default function App() {
             </div>))}
           </div>
         </>}
+        {page==="chatbot"&&<>
+          {chatError&&(
+            <div style={{background:"#FCEBEB",border:"1px solid #f5c6c6",borderRadius:10,padding:"12px 16px",fontSize:13,color:"#791F1F"}}>
+              <strong>Server offline:</strong> {chatError}
+              <div style={{marginTop:6,fontSize:12,color:"#b03030"}}>
+                1. Copy <code>.env.example</code> → <code>.env</code> and fill in your keys.<br/>
+                2. Run <code>npm install</code> then <code>npm run server</code> in a second terminal.
+              </div>
+            </div>
+          )}
+
+          {/* Stats row */}
+          {chatStats&&(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10}}>
+              <MetricCard label="Total contacts" value={chatStats.total} sub="ever reached"/>
+              <MetricCard label="Active" value={chatStats.active} color="#1D9E75" sub="auto-replying"/>
+              <MetricCard label="Appointments" value={chatStats.scheduled} color="#378ADD" sub="scheduled"/>
+              <MetricCard label="Opted out" value={chatStats.optedOut} color="#888780" sub="do not contact"/>
+              <MetricCard label="Paused" value={chatStats.paused} color="#BA7517" sub="manual hold"/>
+            </div>
+          )}
+
+          {/* Setup instructions when no conversations yet */}
+          {!chatError&&chatConvos.length===0&&!chatLoading&&(
+            <div style={{...S,borderStyle:"dashed"}}>
+              <div style={{fontSize:13,color:"#888",lineHeight:1.8}}>
+                <strong style={{color:"#1a1a1a",display:"block",marginBottom:8}}>No conversations yet — here's how to connect SmarterContact:</strong>
+                <ol style={{paddingLeft:18,margin:0}}>
+                  <li>Copy <code>.env.example</code> → <code>.env</code> and add your <strong>ANTHROPIC_API_KEY</strong> and <strong>SMARTER_CONTACT_API_KEY</strong>.</li>
+                  <li>Run <code>npm run server</code> to start the webhook server on port 3001.</li>
+                  <li>Expose it publicly with <a href="https://ngrok.com" style={{color:"#1D9E75"}}>ngrok</a>: <code>ngrok http 3001</code></li>
+                  <li>In SmarterContact → Settings → Integrations → Webhooks, set the <strong>Inbound Message Webhook</strong> URL to:<br/><code style={{background:"#f5f5f3",padding:"2px 6px",borderRadius:4}}>https://your-ngrok-url.ngrok.io/webhook/smartercontact</code></li>
+                  <li>When a contact replies to any SmarterContact campaign, the AI will automatically respond and the conversation will appear here.</li>
+                </ol>
+              </div>
+            </div>
+          )}
+
+          {/* Two-panel layout: list + detail */}
+          {chatConvos.length>0&&(
+            <div style={{display:"grid",gridTemplateColumns:"320px 1fr",gap:16,alignItems:"start"}}>
+
+              {/* Conversation list */}
+              <div style={S}>
+                <div style={{...T,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span>Conversations ({chatConvos.length})</span>
+                  <span onClick={loadChatbot} style={{cursor:"pointer",color:"#1D9E75",fontWeight:400,textTransform:"none",fontSize:11}}>{chatLoading?"syncing…":"↻ refresh"}</span>
+                </div>
+                {chatConvos.map(c=>(
+                  <div key={c.id} onClick={()=>setSelectedConvo(c)} style={{padding:"9px 10px",borderRadius:8,marginBottom:4,cursor:"pointer",background:selectedConvo?.id===c.id?"#f0f0ee":"transparent",border:"1px solid",borderColor:selectedConvo?.id===c.id?"#e5e5e3":"transparent"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <span style={{fontSize:13,fontWeight:500,color:"#1a1a1a"}}>{c.contactName}</span>
+                      <ChatStatusPill status={c.status}/>
+                    </div>
+                    <div style={{fontSize:11,color:"#aaa"}}>{c.contactPhone}</div>
+                    {c.appointmentTime&&<div style={{fontSize:11,color:"#378ADD",marginTop:2}}>📅 {c.appointmentTime}</div>}
+                    {c.history.length>0&&(
+                      <div style={{fontSize:12,color:"#888",marginTop:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                        {c.history[c.history.length-1].content}
+                      </div>
+                    )}
+                    <div style={{fontSize:10,color:"#bbb",marginTop:3}}>{new Date(c.lastActivity).toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Conversation detail */}
+              {selectedConvo?(
+                <div style={S}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                    <div>
+                      <div style={{fontSize:14,fontWeight:600,color:"#1a1a1a"}}>{selectedConvo.contactName}</div>
+                      <div style={{fontSize:12,color:"#aaa"}}>{selectedConvo.contactPhone}</div>
+                      {selectedConvo.appointmentTime&&<div style={{fontSize:12,color:"#378ADD",marginTop:2}}>Appointment: {selectedConvo.appointmentTime}</div>}
+                    </div>
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <ChatStatusPill status={selectedConvo.status}/>
+                      {(selectedConvo.status==="active"||selectedConvo.status==="scheduled")&&(
+                        <button onClick={()=>pauseConvo(selectedConvo.id)} style={{fontSize:11,padding:"4px 10px",borderRadius:8,border:"1px solid #e5e5e3",background:"#fff",color:"#BA7517",cursor:"pointer",fontWeight:500}}>Pause AI</button>
+                      )}
+                      {selectedConvo.status==="paused"&&(
+                        <button onClick={()=>resumeConvo(selectedConvo.id)} style={{fontSize:11,padding:"4px 10px",borderRadius:8,border:"1px solid #e5e5e3",background:"#fff",color:"#1D9E75",cursor:"pointer",fontWeight:500}}>Resume AI</button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Message thread */}
+                  <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:480,overflowY:"auto",padding:"4px 0"}}>
+                    {selectedConvo.history.length===0&&(
+                      <div style={{fontSize:13,color:"#aaa",textAlign:"center",padding:24}}>No messages yet</div>
+                    )}
+                    {selectedConvo.history.map((msg,i)=>{
+                      const isAI=msg.role==="assistant";
+                      return(
+                        <div key={i} style={{display:"flex",flexDirection:"column",alignItems:isAI?"flex-end":"flex-start"}}>
+                          <div style={{maxWidth:"80%",padding:"9px 13px",borderRadius:isAI?"18px 18px 4px 18px":"18px 18px 18px 4px",background:isAI?"#1D9E75":"#f0f0ee",color:isAI?"#fff":"#1a1a1a",fontSize:13,lineHeight:1.5}}>
+                            {msg.content}
+                          </div>
+                          <div style={{fontSize:10,color:"#bbb",marginTop:3,paddingInline:4}}>{isAI?"Alex (AI)":"Contact"}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ):(
+                <div style={{...S,display:"flex",alignItems:"center",justifyContent:"center",minHeight:200}}>
+                  <div style={{fontSize:13,color:"#aaa"}}>Select a conversation to view messages</div>
+                </div>
+              )}
+            </div>
+          )}
+        </>}
+
       </div>
     </div>
   );
