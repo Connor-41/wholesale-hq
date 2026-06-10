@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import InvestorliftBuyers from "./InvestorliftBuyers";
 
 const CU_TOKEN   = "pk_282840044_WW0I1SITP27QRPETB6MH0JB9MOP9YPI8";
 const DISP_ID    = "901612411878";
@@ -135,7 +136,7 @@ export default function App() {
   const S={background:"#fff",border:"1px solid #e5e5e3",borderRadius:12,padding:"14px 16px"};
   const T={fontSize:11,fontWeight:500,color:"#888",textTransform:"uppercase",letterSpacing:".05em",marginBottom:12};
   const DR={display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid #f0f0ee"};
-  const NAV=[{id:"overview",label:"Overview"},{id:"dispositions",label:"Dispositions"},{id:"acquisitions",label:"Acquisitions"},{id:"transactions",label:"Transactions"}];
+  const NAV=[{id:"overview",label:"Overview"},{id:"dispositions",label:"Dispositions"},{id:"acquisitions",label:"Acquisitions"},{id:"transactions",label:"Transactions"},{id:"buyers",label:"IL Buyers"}];
 
   return(
     <div style={{display:"grid",gridTemplateColumns:"200px 1fr",minHeight:"100vh",background:"#fff",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
@@ -154,7 +155,7 @@ export default function App() {
 
       <div style={{padding:24,display:"flex",flexDirection:"column",gap:16,overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:22,fontWeight:600,color:"#1a1a1a"}}>{{overview:"Overview",dispositions:"Dispositions",acquisitions:"Acquisitions",transactions:"Transactions"}[page]}</div>
+          <div style={{fontSize:22,fontWeight:600,color:"#1a1a1a"}}>{{overview:"Overview",dispositions:"Dispositions",acquisitions:"Acquisitions",transactions:"Transactions",buyers:"Investorlift Buyers"}[page]}</div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {error&&<span style={{fontSize:12,color:"#E24B4A"}}>{error}</span>}
             <div style={{fontSize:12,color:"#888",background:"#f5f5f3",padding:"5px 10px",borderRadius:8,border:"1px solid #e5e5e3"}}>{loading?"Syncing ClickUp...":`${dispTasks.length+acqTasks.length} deals live`}</div>
@@ -214,6 +215,8 @@ export default function App() {
             {loading?<div style={{fontSize:13,color:"#888"}}>Loading from ClickUp...</div>:filteredAcq.map(t=>(<div key={t.id} style={{...DR,flexWrap:"wrap"}}><span style={{fontSize:13,color:"#1a1a1a",flex:1,minWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span><AcqPill label={t.status?.status} colorMap={acqColorMap}/><span style={{fontSize:11,color:"#aaa",marginLeft:"auto"}}>{t.date_updated?new Date(parseInt(t.date_updated)).toLocaleDateString():""}</span></div>))}
           </div>
         </>}
+
+        {page==="buyers"&&<InvestorliftBuyers/>}
 
         {page==="transactions"&&<>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
